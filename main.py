@@ -4,6 +4,7 @@ import time
 import threading
 import psycopg2
 import gc  # 메모리 자동 청소기 도입
+from datetime import datetime, timezone, timedelta
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
@@ -134,13 +135,37 @@ def update_database():
                 cur.close()
                 conn.close()
 
-# --- 3. 백그라운드 무한 수집 봇 ---
+# --- 3. 백그라운드 무한 수집 봇 (스마트 주기 적용) ---
 def background_task():
     time.sleep(5) 
+    
+    # 한국 표준시(KST) 설정 (UTC+9)
+    KST = timezone(timedelta(hours=9))
+    
     while True:
+        # DB 업데이트 및 메모리 청소 실행
         update_database()
-        gc.collect() # 수집 후 메모리 찌꺼기 즉시 청소!
-        time.sleep(3600)
+        gc.collect() 
+        
+        # 현재 한국 시간 확인
+        now_kst = datetime.now(KST)
+        
+        # 월~금 (0: 월요일, 4: 금요일)
+        is_weekday = now_kst.weekday() < 5
+        
+        # 개장 시간 판별 (09:00 ~ 15:30)
+        is_market_open = False
+        if is_weekday:
+            if now_kst.hour >= 9 and (now_kst.hour < 15 or (now_kst.hour == 15 and now_kst.minute <= 30)):
+                is_market_open = True
+        
+        # 시간에 따른 대기(Sleep) 주기 분기
+        if is_market_open:
+            print(f"📈 [장중] 한국 시장이 열려있습니다. 1분(60초) 후 다시 수집합니다. (현재: {now_kst.strftime('%H:%M')})")
+            time.sleep(60)
+        else:
+            print(f"💤 [장마감/휴일] 한국 시장이 닫혀있습니다. 1시간(3600초) 후 수집합니다. (현재: {now_kst.strftime('%H:%M')})")
+            time.sleep(3600)
 
 @app.on_event("startup")
 def startup_event():
